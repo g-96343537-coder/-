@@ -1,0 +1,707 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>错别字抓捕大作战 - Google Sheet 动态关卡版</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=ZCOOL+KuaiLe&display=swap');
+        
+        body {
+            font-family: 'ZCOOL KuaiLe', sans-serif;
+            margin: 0;
+            overflow: hidden;
+            background-color: #1a202c;
+            color: white;
+            user-select: none;
+        }
+
+        #game-container {
+            position: relative;
+            width: 100vw;
+            height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #video-element {
+            display: none;
+        }
+
+        canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.75);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 20;
+        }
+
+        .hud {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            z-index: 10;
+            pointer-events: none;
+        }
+
+        .hud-box {
+            background: rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(5px);
+            padding: 10px 20px;
+            border-radius: 15px;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            font-size: 1.5rem;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .btn {
+            background: linear-gradient(45deg, #48bb78, #38a169);
+            border: none;
+            padding: 15px 40px;
+            font-size: 1.5rem;
+            color: white;
+            border-radius: 30px;
+            cursor: pointer;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: transform 0.2s, box-shadow 0.2s;
+            font-family: inherit;
+        }
+        
+        .btn:hover {
+            transform: scale(1.05);
+            box-shadow: 0 6px 8px rgba(0,0,0,0.4);
+        }
+        
+        .btn:disabled {
+            background: #a0aec0;
+            cursor: not-allowed;
+            transform: none;
+        }
+    </style>
+</head>
+<body>
+
+<div id="game-container">
+    <video id="video-element" autoplay playsinline></video>
+    <canvas id="game-canvas"></canvas>
+
+    <!-- HUD (顶部游戏状态栏) -->
+    <div id="hud" class="hud hidden">
+        <div class="hud-box text-blue-300">
+            🚩 关卡: <span id="level-display">1</span>
+        </div>
+        <div class="hud-box text-green-300">
+            📌 进度: <span id="progress-display">1/10</span>
+        </div>
+        <div id="combo-display" class="hud-box text-blue-300 hidden font-bold animate-pulse">
+            🔥 连击 x2!
+        </div>
+        <div class="hud-box text-yellow-300">
+            ⭐ 分数: <span id="score-display">0</span>
+        </div>
+    </div>
+
+    <!-- 题目显示横幅 -->
+    <div id="question-banner" class="absolute top-24 left-0 w-full flex justify-center pointer-events-none z-10 hidden transition-opacity duration-300">
+        <div class="bg-gray-800 bg-opacity-90 border-2 border-yellow-400 py-3 px-6 rounded-xl text-3xl shadow-[0_0_15px_rgba(236,201,75,0.5)]">
+            <span id="question-text" class="tracking-widest"></span>
+        </div>
+    </div>
+
+    <!-- 开始界面 -->
+    <div id="start-screen" class="overlay">
+        <h1 class="text-6xl text-blue-400 mb-4 drop-shadow-lg text-center font-bold">📝 错别字抓捕大作战</h1>
+        <p class="text-xl mb-4 text-center text-gray-200">消灭错别字，突破更多关卡！</p>
+        
+        <!-- 关卡选择器 -->
+        <div class="mb-6 flex items-center space-x-3 bg-gray-800 p-3 rounded-xl border border-gray-600">
+            <label for="level-select" class="text-lg text-yellow-300">选择关卡：</label>
+            <select id="level-select" class="bg-gray-700 text-white border border-gray-500 rounded px-3 py-1 text-lg focus:outline-none">
+                <option value="1">第 1 关</option>
+            </select>
+        </div>
+
+        <div class="bg-gray-800 bg-opacity-80 p-6 rounded-xl border border-gray-600 mb-6 max-w-lg text-left">
+            <h3 class="text-2xl text-yellow-300 mb-3 border-b border-gray-500 pb-2">🎮 玩法说明：</h3>
+            <ul class="list-disc pl-6 space-y-2 text-lg">
+                <li>允许浏览器访问摄像头。</li>
+                <li>举起手，将<b>食指和拇指捏合</b>即可抓住掉落的字词气泡。</li>
+                <li>观察屏幕上方的句子，将正确的字拖拽到屏幕底部的 <b>[ 目标方格 ]</b> 中。</li>
+                <li>每关包含 10 道题目，答对获得积分。</li>
+            </ul>
+        </div>
+        <button id="start-btn" class="btn" disabled>正在初始化摄像头...</button>
+        <p id="loading-text" class="text-sm text-gray-400 mt-4">请允许使用摄像头权限，加载可能需要几秒钟...</p>
+    </div>
+
+    <!-- 结算界面 -->
+    <div id="end-screen" class="overlay hidden">
+        <h1 id="end-title" class="text-6xl text-yellow-400 mb-4 drop-shadow-lg font-bold">关卡完成！</h1>
+        <p class="text-3xl mb-8">最终得分: <span id="final-score" class="text-green-400 font-bold">0</span> 分</p>
+        
+        <div class="bg-gray-800 bg-opacity-80 p-6 rounded-xl border border-gray-600 mb-8 max-w-md text-center">
+            <p class="text-xl text-white mb-2">🎓 学习成果评估：</p>
+            <p id="evaluation-text" class="text-lg text-blue-300">太棒了！你消灭了许多错别字！</p>
+        </div>
+
+        <div class="flex space-x-4">
+            <button id="restart-btn" class="btn">重新本关</button>
+            <button id="next-level-btn" class="btn hidden" style="background: linear-gradient(45deg, #3182ce, #2b6cb0);">下一关</button>
+        </div>
+    </div>
+</div>
+
+<script>
+    // -------------------------------------------------------------
+    // 【重要】请将下方变量替换为您的 GAS 部署 Web App URL
+    // 例如: "https://script.google.com/macros/s/AKfycbx.../exec"
+    // -------------------------------------------------------------
+    const GAS_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzBnVUOKPNXCZvQCVMwQohSBZT8Du0otwoEpwCHWzl1Hho52tCdzpLLviHfRZDvjuJY/exec";
+
+    // 默认备用本地题库（防止 GAS 未联网或配置失败时不可用）
+    let allLevelsData = {
+        "1": [
+            { sentence: "今天的天气真清[  ]，我们去郊游吧。", correct: "朗", options: ["朗", "狼", "浪", "廊"] },
+            { sentence: "小明在比赛中取得了优[  ]的成绩。", correct: "异", options: ["异", "导", "寻", "忌"] },
+            { sentence: "妈妈买了新鲜的骨[  ]来熬汤。", correct: "髓", options: ["髓", "随", "惰", "椭"] },
+            { sentence: "我们在图书馆里要保持安[  ]。", correct: "静", options: ["静", "净", "敬", "竞"] },
+            { sentence: "老师夸奖他是一个有礼[  ]的好孩子。", correct: "貌", options: ["貌", "帽", "耗", "效"] },
+            { sentence: "过马路时一定要提[  ]来往的车辆。", correct: "防", options: ["防", "房", "妨", "仿"] },
+            { sentence: "失败了没关系，我们要再接再[  ]。", correct: "厉", options: ["厉", "历", "励", "立"] },
+            { sentence: "小狗在院子里快乐地[  ]跑。", correct: "奔", options: ["奔", "笨", "体", "本"] },
+            { sentence: "太阳从东边徐徐升[  ]。", correct: "起", options: ["起", "企", "乞", "齐"] },
+            { sentence: "我们要爱护公[  ]，保护环境。", correct: "物", options: ["物", "误", "屋", "务"] }
+        ]
+    };
+
+    // UI 元素声明
+    const canvas = document.getElementById('game-canvas');
+    const ctx = canvas.getContext('2d');
+    const videoElement = document.getElementById('video-element');
+    const startScreen = document.getElementById('start-screen');
+    const endScreen = document.getElementById('end-screen');
+    const hud = document.getElementById('hud');
+    const questionBanner = document.getElementById('question-banner');
+    const questionText = document.getElementById('question-text');
+    const comboDisplay = document.getElementById('combo-display');
+    const startBtn = document.getElementById('start-btn');
+    const restartBtn = document.getElementById('restart-btn');
+    const nextLevelBtn = document.getElementById('next-level-btn');
+    const loadingText = document.getElementById('loading-text');
+    const levelDisplay = document.getElementById('level-display');
+    const progressDisplay = document.getElementById('progress-display');
+    const scoreDisplay = document.getElementById('score-display');
+    const finalScoreDisplay = document.getElementById('final-score');
+    const levelSelect = document.getElementById('level-select');
+
+    // 游戏全局状态变量
+    let currentLevel = "1";
+    let currentQuestionIndex = 0;
+    let currentLevelQuestions = [];
+    let isPlaying = false;
+    let score = 0;
+    let cameraStarted = false;
+    let combo = 0;
+
+    // 自适应屏幕尺寸
+    function resizeCanvas() {
+        canvas.width = window.innerWidth;
+        canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // JSONP 方式获取 GAS 题库，规避 CORS 跨域问题
+    function loadQuestionsFromGAS() {
+        if (!GAS_WEB_APP_URL || GAS_WEB_APP_URL.includes("YOUR_GAS_WEB_APP_URL_HERE")) {
+            console.log("未配置 GAS URL，使用本地内置题库。");
+            updateLevelDropdown();
+            return;
+        }
+
+        loadingText.innerText = "正在从 Google Sheets 同步题库...";
+
+        // 定义 JSONP 回调函数
+        window.handleGASResponse = function(data) {
+            if (data && data.status === "success" && Object.keys(data.levels).length > 0) {
+                allLevelsData = data.levels;
+                updateLevelDropdown();
+                console.log("成功同步 Google Sheets 题库:", allLevelsData);
+            } else {
+                console.warn("GAS 返回数据格式受限，使用默认本地题库", data);
+                updateLevelDropdown();
+            }
+        };
+
+        // 动态创建 script 脚本发起请求
+        const script = document.createElement('script');
+        const separator = GAS_WEB_APP_URL.includes('?') ? '&' : '?';
+        script.src = `${GAS_WEB_APP_URL}${separator}callback=handleGASResponse&_=${Date.now()}`;
+        script.onerror = function() {
+            console.error("加载 GAS 题库失败，切换为本地备用题库。");
+            loadingText.innerText = "网络同步失败，已载入本地题库。";
+            updateLevelDropdown();
+        };
+        document.body.appendChild(script);
+    }
+
+    // 更新关卡下拉列表
+    function updateLevelDropdown() {
+        levelSelect.innerHTML = "";
+        const levels = Object.keys(allLevelsData).sort((a, b) => Number(a) - Number(b));
+        levels.forEach(lvl => {
+            const opt = document.createElement('option');
+            opt.value = String(lvl);
+            opt.innerText = `第 ${lvl} 关`;
+            levelSelect.appendChild(opt);
+        });
+        currentLevel = levels[0] ? String(levels[0]) : "1";
+    }
+
+    levelSelect.addEventListener('change', (e) => {
+        currentLevel = e.target.value;
+    });
+
+    // 实体与状态
+    let fallingObjects = [];
+    let slots = [];
+    let handCursor = { x: -100, y: -100, isPinching: false };
+    let grabbedObject = null;
+    let floatingTexts = [];
+
+    // 加载指定题目
+    function loadQuestion(index) {
+        if (index >= currentLevelQuestions.length) {
+            endGame(true);
+            return;
+        }
+
+        const q = currentLevelQuestions[index];
+        questionText.innerHTML = q.sentence.replace("[  ]", "<span class='text-yellow-400 font-bold border-b-4 border-yellow-400 mx-2 inline-block w-12 h-8'></span>");
+        
+        progressDisplay.innerText = `${index + 1}/${currentLevelQuestions.length}`;
+        
+        fallingObjects = [];
+        const shuffledOptions = [...q.options].sort(() => Math.random() - 0.5);
+        
+        shuffledOptions.forEach((opt, idx) => {
+            let isCorrect = (opt === q.correct);
+            let obj = new FallingObject(opt, isCorrect);
+            obj.x = (canvas.width / (shuffledOptions.length + 1)) * (idx + 1);
+            obj.y = -Math.random() * 200 - 50;
+            fallingObjects.push(obj);
+        });
+    }
+
+    // 初始化下方答题区域槽位
+    function initSlots() {
+        slots = [];
+        const slotWidth = 220;
+        const slotHeight = 120;
+        slots.push({
+            type: 'answer_slot',
+            x: canvas.width / 2 - slotWidth / 2,
+            y: canvas.height - slotHeight - 40,
+            width: slotWidth,
+            height: slotHeight,
+            label: "投放处"
+        });
+    }
+
+    // MediaPipe Hands 初始化
+    const hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.5
+    });
+
+    hands.onResults(onResults);
+
+    function onResults(results) {
+        if (!cameraStarted) {
+            cameraStarted = true;
+            startBtn.disabled = false;
+            startBtn.innerText = "▶ 开始游戏";
+            loadingText.classList.add('hidden');
+        }
+
+        if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+            const landmarks = results.multiHandLandmarks[0];
+            const indexTip = landmarks[8];
+            const thumbTip = landmarks[4];
+
+            const cx_index = (1 - indexTip.x) * canvas.width;
+            const cy_index = indexTip.y * canvas.height;
+            const cx_thumb = (1 - thumbTip.x) * canvas.width;
+            const cy_thumb = thumbTip.y * canvas.height;
+
+            const dx = cx_index - cx_thumb;
+            const dy = cy_index - cy_thumb;
+            const distance = Math.sqrt(dx * dx + dy * dy);
+
+            handCursor.x = (cx_index + cx_thumb) / 2;
+            handCursor.y = (cy_index + cy_thumb) / 2;
+
+            const pinchThreshold = canvas.width * 0.06; 
+            handCursor.isPinching = distance < pinchThreshold;
+        } else {
+            handCursor.x = -100;
+            handCursor.y = -100;
+            handCursor.isPinching = false;
+            if (grabbedObject) {
+                grabbedObject.isGrabbed = false;
+                grabbedObject = null;
+            }
+        }
+    }
+
+    // 开启摄像头捕捉
+    if (typeof Camera !== 'undefined') {
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({image: videoElement}); },
+            width: 640,
+            height: 480
+        });
+        camera.start().catch(err => {
+            console.error(err);
+            alert("无法访问摄像头，请确保使用 HTTPS 协议或 localhost 并已授予浏览器摄像头权限。");
+        });
+    }
+
+    canvas.style.transform = 'none';
+
+    // 掉落字气泡类
+    class FallingObject {
+        constructor(char, isCorrect) {
+            this.text = char;
+            this.isCorrect = isCorrect;
+            this.radius = 45;
+            this.x = 0;
+            this.y = 0;
+            this.speed = 1.2 + Math.random() * 1.5;
+            this.isGrabbed = false;
+            this.isAlive = true;
+        }
+
+        update() {
+            if (!this.isAlive) return;
+
+            if (this.isGrabbed) {
+                this.x = handCursor.x;
+                this.y = handCursor.y;
+            } else {
+                this.y += this.speed;
+                if (this.y > canvas.height + this.radius) {
+                    this.y = -this.radius;
+                    this.x = Math.random() * (canvas.width - this.radius * 4) + this.radius * 2;
+                }
+            }
+        }
+
+        draw(ctx) {
+            if (!this.isAlive) return;
+            
+            ctx.beginPath();
+            ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+            const gradient = ctx.createRadialGradient(this.x - 10, this.y - 10, 5, this.x, this.y, this.radius);
+            gradient.addColorStop(0, 'rgba(255, 255, 255, 0.9)');
+            gradient.addColorStop(1, this.isGrabbed ? 'rgba(144, 205, 244, 0.8)' : 'rgba(226, 232, 240, 0.7)');
+            
+            ctx.fillStyle = gradient;
+            ctx.fill();
+            ctx.lineWidth = 3;
+            ctx.strokeStyle = this.isGrabbed ? '#3182ce' : '#a0aec0';
+            ctx.stroke();
+
+            ctx.font = "bold 40px 'ZCOOL KuaiLe', sans-serif";
+            ctx.fillStyle = "#2d3748";
+            ctx.textAlign = "center";
+            ctx.textBaseline = "middle";
+            ctx.fillText(this.text, this.x, this.y + 4);
+        }
+    }
+
+    // 得分漂浮文字
+    class FloatingText {
+        constructor(text, x, y, color) {
+            this.text = text;
+            this.x = x;
+            this.y = y;
+            this.color = color;
+            this.life = 60;
+        }
+        update() {
+            this.y -= 2;
+            this.life--;
+        }
+        draw(ctx) {
+            ctx.font = "30px 'ZCOOL KuaiLe'";
+            ctx.fillStyle = this.color;
+            ctx.globalAlpha = Math.max(0, this.life / 60);
+            ctx.fillText(this.text, this.x, this.y);
+            ctx.globalAlpha = 1.0;
+        }
+    }
+
+    function addScore(amount, x, y) {
+        score += amount;
+        scoreDisplay.innerText = score;
+        let color = amount > 0 ? '#48bb78' : '#f56565';
+        let text = amount > 0 ? `+${amount}` : `${amount}`;
+        floatingTexts.push(new FloatingText(text, x, y, color));
+    }
+
+    // 兼容低版本 Canvas API 的圆角矩形绘制函数
+    function drawRoundRect(ctx, x, y, width, height, radius) {
+        if (ctx.roundRect) {
+            ctx.roundRect(x, y, width, height, radius);
+        } else {
+            ctx.beginPath();
+            ctx.moveTo(x + radius, y);
+            ctx.arcTo(x + width, y, x + width, y + height, radius);
+            ctx.arcTo(x + width, y + height, x, y + height, radius);
+            ctx.arcTo(x, y + height, x, y, radius);
+            ctx.arcTo(x, y, x + width, y, radius);
+            ctx.closePath();
+        }
+    }
+
+    // 游戏主帧画面绘制循环
+    function mainRenderLoop() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+        // 镜像渲染视频背景
+        if (cameraStarted) {
+            ctx.save();
+            ctx.scale(-1, 1);
+            ctx.drawImage(videoElement, -canvas.width, 0, canvas.width, canvas.height);
+            ctx.restore();
+            ctx.fillStyle = isPlaying ? 'rgba(15, 23, 42, 0.5)' : 'rgba(0, 0, 0, 0.6)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        if (isPlaying) {
+            // 1. 绘制答题目标槽
+            if (slots.length === 0) initSlots();
+            slots.forEach(slot => {
+                ctx.fillStyle = 'rgba(45, 55, 72, 0.8)';
+                ctx.beginPath();
+                ctx.setLineDash([10, 10]);
+                drawRoundRect(ctx, slot.x, slot.y, slot.width, slot.height, 15);
+                ctx.fill();
+                
+                ctx.strokeStyle = '#ecc94b';
+                ctx.lineWidth = 4;
+                ctx.stroke();
+                ctx.setLineDash([]);
+
+                ctx.font = "28px 'ZCOOL KuaiLe'";
+                ctx.fillStyle = "#ecc94b";
+                ctx.textAlign = "center";
+                ctx.fillText(`📥 ${slot.label}`, slot.x + slot.width / 2, slot.y + slot.height / 2 + 8);
+            });
+
+            // 2. 气泡抓取与释放判定
+            let handIsFree = (grabbedObject === null);
+
+            if (grabbedObject && !handCursor.isPinching) {
+                let droppedInSlot = false;
+                for (let slot of slots) {
+                    if (grabbedObject.x > slot.x && grabbedObject.x < slot.x + slot.width &&
+                        grabbedObject.y > slot.y && grabbedObject.y < slot.y + slot.height) {
+                        
+                        if (grabbedObject.isCorrect) {
+                            combo++;
+                            let points = combo >= 3 ? 20 : 10;
+                            addScore(points, grabbedObject.x, grabbedObject.y);
+                            
+                            setTimeout(() => {
+                                currentQuestionIndex++;
+                                loadQuestion(currentQuestionIndex);
+                            }, 400); 
+                        } else {
+                            combo = 0;
+                            addScore(-5, grabbedObject.x, grabbedObject.y);
+                            grabbedObject.y = -50; 
+                        }
+                        droppedInSlot = true;
+                        break;
+                    }
+                }
+                
+                if (combo >= 3) {
+                    comboDisplay.classList.remove('hidden');
+                } else {
+                    comboDisplay.classList.add('hidden');
+                }
+
+                grabbedObject.isGrabbed = false;
+                if (droppedInSlot && grabbedObject.isCorrect) {
+                    grabbedObject.isAlive = false; 
+                }
+                grabbedObject = null;
+            }
+
+            // 3. 更新与绘制气泡
+            for (let i = fallingObjects.length - 1; i >= 0; i--) {
+                let obj = fallingObjects[i];
+                
+                if (handIsFree && handCursor.isPinching && !obj.isGrabbed && obj.isAlive) {
+                    let dx = obj.x - handCursor.x;
+                    let dy = obj.y - handCursor.y;
+                    let dist = Math.sqrt(dx * dx + dy * dy);
+                    if (dist < obj.radius + 30) {
+                        obj.isGrabbed = true;
+                        grabbedObject = obj;
+                        handIsFree = false;
+                    }
+                }
+
+                obj.update();
+                obj.draw(ctx);
+
+                if (!obj.isAlive) {
+                    fallingObjects.splice(i, 1);
+                }
+            }
+
+            // 4. 绘制得分特效字
+            for (let i = floatingTexts.length - 1; i >= 0; i--) {
+                let ft = floatingTexts[i];
+                ft.update();
+                ft.draw(ctx);
+                if (ft.life <= 0) floatingTexts.splice(i, 1);
+            }
+
+            // 5. 绘制手势跟踪光标
+            if (handCursor.x > 0) {
+                ctx.beginPath();
+                ctx.arc(handCursor.x, handCursor.y, 20, 0, Math.PI * 2);
+                ctx.fillStyle = handCursor.isPinching ? 'rgba(72, 187, 120, 0.8)' : 'rgba(255, 255, 255, 0.5)';
+                ctx.fill();
+                ctx.lineWidth = 2;
+                ctx.strokeStyle = '#fff';
+                ctx.stroke();
+
+                if (handCursor.isPinching) {
+                    ctx.beginPath();
+                    ctx.arc(handCursor.x, handCursor.y, 25, 0, Math.PI * 2);
+                    ctx.strokeStyle = '#48bb78';
+                    ctx.lineWidth = 4;
+                    ctx.stroke();
+                }
+            }
+        }
+
+        requestAnimationFrame(mainRenderLoop);
+    }
+
+    // 游戏控制
+    function startGame() {
+        currentLevel = String(levelSelect.value);
+        currentLevelQuestions = allLevelsData[currentLevel] || [];
+
+        if (currentLevelQuestions.length === 0) {
+            alert("该关卡暂无题目，请在 Sheet 中添加题目。");
+            return;
+        }
+
+        startScreen.classList.add('hidden');
+        endScreen.classList.add('hidden');
+        hud.classList.remove('hidden');
+        questionBanner.classList.remove('hidden');
+        
+        isPlaying = true;
+        score = 0;
+        combo = 0;
+        currentQuestionIndex = 0;
+        fallingObjects = [];
+        grabbedObject = null;
+        floatingTexts = [];
+        
+        levelDisplay.innerText = currentLevel;
+        scoreDisplay.innerText = score;
+        comboDisplay.classList.add('hidden');
+        
+        initSlots();
+        loadQuestion(currentQuestionIndex);
+    }
+
+    function endGame(isWin = true) {
+        isPlaying = false;
+        
+        hud.classList.add('hidden');
+        questionBanner.classList.add('hidden');
+        endScreen.classList.remove('hidden');
+        finalScoreDisplay.innerText = score;
+
+        const evalText = document.getElementById('evaluation-text');
+        const endTitle = document.getElementById('end-title');
+
+        if (isWin) {
+            endTitle.innerText = `🎉 恭喜通关第 ${currentLevel} 关！`;
+            evalText.innerText = "表现太出彩了！成功完成了本关卡的所有训练题！";
+            
+            const nextLvl = String(Number(currentLevel) + 1);
+            if (allLevelsData[nextLvl]) {
+                nextLevelBtn.classList.remove('hidden');
+            } else {
+                nextLevelBtn.classList.add('hidden');
+            }
+        } else {
+            endTitle.innerText = "游戏结束";
+            evalText.innerText = "再接再厉，挑战更好的成绩吧！";
+            nextLevelBtn.classList.add('hidden');
+        }
+    }
+
+    // 绑定交互按钮事件
+    startBtn.addEventListener('click', startGame);
+    restartBtn.addEventListener('click', startGame);
+    
+    nextLevelBtn.addEventListener('click', () => {
+        const nextLvl = String(Number(currentLevel) + 1);
+        if (allLevelsData[nextLvl]) {
+            levelSelect.value = nextLvl;
+            startGame();
+        }
+    });
+
+    // 页面初始化：远程拉取 GAS 题库，并启动主渲染帧循环
+    loadQuestionsFromGAS();
+    mainRenderLoop();
+</script>
+</body>
+</html>
